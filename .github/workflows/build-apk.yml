@@ -1,12 +1,46 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: SDK NDK CMake
+        shell: bash
+        run: |
+          set -e
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n1)
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+
       - name: Скачать сабмодули в версиях исходного Telegram
         shell: bash
         run: |
           set -eo pipefail
 
-          if [ ! -f .gitmodules ]; then
-            echo "::error::В текущем репозитории нет файла .gitmodules"
-            exit 1
-          fi
+          test -f .gitmodules || exit 1
 
           rm -rf "$RUNNER_TEMP/telegram-upstream"
           git clone --filter=blob:none \
@@ -24,65 +58,42 @@
             fi
           done < <(git -C "$RUNNER_TEMP/telegram-upstream" log --all --format=%H -- "$reference")
 
-          if [ -z "$revision" ]; then
-            echo "::error::Не найден исходный коммит Telegram с файлом $reference"
-            exit 1
-          fi
-          echo "Исходный коммит Telegram: $revision"
+          [ -n "$revision" ] || exit 1
 
           git -C "$RUNNER_TEMP/telegram-upstream" checkout --detach "$revision"
           git -C "$RUNNER_TEMP/telegram-upstream" submodule update --init --recursive --progress || true
 
-          # Список путей сабмодулей берём из .gitmodules НАШЕГО форка —
-          # это единственный надёжный источник, так как часть модулей
-          # (например, TMessagesProj_Modules/media) в оригинальном
-          # DrKLO/Telegram не существует вообще и является спецификой мода.
           mapfile -t paths < <(git config --file .gitmodules --get-regexp path | awk '{print $2}')
-
-          if [ "${#paths[@]}" -eq 0 ]; then
-            echo "::error::В .gitmodules форка не найдено ни одного пути (path = ...)"
-            exit 1
-          fi
-
-          echo "::group::Пути сабмодулей форка"
-          printf '%s\n' "${paths[@]}"
-          echo "::endgroup::"
+          [ "${#paths[@]}" -gt 0 ] || exit 1
 
           for path in "${paths[@]}"; do
             [ -z "$path" ] && continue
             src="$RUNNER_TEMP/telegram-upstream/$path"
 
             if [ -e "$src" ] && [ -n "$(ls -A "$src" 2>/dev/null)" ]; then
-              echo "Копирую точную upstream-версию: $path"
               rm -rf "$path"
               mkdir -p "$(dirname "$path")"
               cp -a "$src" "$path"
             else
-              echo "Путь отсутствует в upstream, используем версию форка: $path"
-              url=$(git config --file .gitmodules --get "submodule.$(git config --file .gitmodules --get-regexp path | awk -v p="$path" '$2==p {print $1}' | sed 's/\.path$//').url" || true)
-              if [ -z "$url" ]; then
-                echo "::error::Не удалось определить URL сабмодуля для $path из .gitmodules"
-                exit 1
-              fi
               git submodule update --init -- "$path"
-              if [ ! -e "$path" ] || [ -z "$(ls -A "$path" 2>/dev/null)" ]; then
-                echo "::error::Не удалось инициализировать сабмодуль форка: $path (url: $url)"
-                exit 1
-              fi
+              [ -e "$path" ] && [ -n "$(ls -A "$path" 2>/dev/null)" ] || exit 1
             fi
           done
 
-          echo "::group::Проверка критичных файлов"
-          if [ ! -f TMessagesProj_Modules/media/core_settings.gradle ]; then
-            echo "::error::Не найден файл TMessagesProj_Modules/media/core_settings.gradle"
-            find TMessagesProj_Modules -maxdepth 3 2>/dev/null || echo "(каталог TMessagesProj_Modules отсутствует)"
-            exit 1
-          fi
+          test -f TMessagesProj_Modules/media/core_settings.gradle
+          test -f TMessagesProj/config/release.keystore
 
-          if [ ! -f TMessagesProj/config/release.keystore ]; then
-            echo "::error::Нет тестового ключа TMessagesProj/config/release.keystore"
-            find TMessagesProj/config -maxdepth 2 2>/dev/null || echo "(каталог TMessagesProj/config отсутствует)"
-            exit 1
-          fi
-          echo "Все критичные файлы на месте"
-          echo "::endgroup::"
+      - name: Сборка
+        shell: bash
+        run: |
+          set -e
+          chmod +x gradlew
+          ./gradlew :TMessagesProj_App:assembleAfatDebug --no-daemon --max-workers=2 \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" --stacktrace
+
+      - name: APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: telegram-mod-apk
+          path: "**/build/outputs/apk/**/*.apk"
+          if-no-files-found: error

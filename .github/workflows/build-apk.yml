@@ -87,8 +87,17 @@ jobs:
             fi
           done < "$RUNNER_TEMP/submodules.txt"
 
-          test -f TMessagesProj_Modules/media/core_settings.gradle
-          test -f TMessagesProj/config/release.keystore
+          if [ ! -f TMessagesProj_Modules/media/core_settings.gradle ]; then
+            echo "::error::Нет файла TMessagesProj_Modules/media/core_settings.gradle"
+            find TMessagesProj_Modules/media -maxdepth 2 2>/dev/null || echo "каталог media отсутствует"
+            exit 1
+          fi
+
+          if [ ! -f TMessagesProj/config/release.keystore ]; then
+            echo "::error::Нет файла TMessagesProj/config/release.keystore"
+            find TMessagesProj/config -maxdepth 2 2>/dev/null || echo "каталог config отсутствует"
+            exit 1
+          fi
 
       - name: Сборка
         shell: bash

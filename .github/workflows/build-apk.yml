@@ -146,6 +146,18 @@ jobs:
           using Nullable = T;
           }
 
+          #ifndef absl_nullable
+          #define absl_nullable
+          #endif
+
+          #ifndef absl_nonnull
+          #define absl_nonnull
+          #endif
+
+          #ifndef absl_nullability_compatible
+          #define absl_nullability_compatible
+          #endif
+
           #endif
           EOF
 

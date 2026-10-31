@@ -69,6 +69,7 @@ import org.telegram.tgnet.tl.TL_keyboard;
 import org.telegram.tgnet.tl.TL_ephemeral;
 import org.telegram.tgnet.tl.TL_iv;
 import org.telegram.tgnet.tl.TL_stories;
+import org.telegram.tgnet.tl.TL_stars;
 import org.telegram.tgnet.tl.TL_update;
 import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
@@ -1902,6 +1903,42 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
         getMessagesController().updateInterfaceWithMessages(user.id, objects, 0);
         getNotificationCenter().postNotificationName(NotificationCenter.dialogsNeedReload);
         putToSendingMessages(message, false);
+        return object;
+    }
+
+    public MessageObject createLocalStarGiftMessage(TL_stars.StarGift gift, long dialogId, boolean anonymous, boolean upgraded, TLRPC.TL_textWithEntities text) {
+        if (gift == null) {
+            return null;
+        }
+
+        TLRPC.TL_messageService message = new TLRPC.TL_messageService();
+        message.local_id = message.id = getUserConfig().getNewMessageId();
+        message.dialog_id = dialogId;
+        message.out = true;
+        message.unread = true;
+        message.from_id = MessagesController.getInstance(currentAccount).getPeer(getUserConfig().getClientUserId());
+        message.peer_id = MessagesController.getInstance(currentAccount).getPeer(dialogId);
+        message.date = getConnectionsManager().getCurrentTime();
+
+        TLRPC.TL_messageActionStarGift action = new TLRPC.TL_messageActionStarGift();
+        action.gift = gift;
+        action.name_hidden = anonymous;
+        action.upgraded = upgraded;
+        action.forceIn = true;
+        action.convert_stars = upgraded ? 0 : gift.convert_stars;
+        action.upgrade_stars = upgraded ? gift.upgrade_stars : 0;
+        if (text != null && !TextUtils.isEmpty(text.text)) {
+            action.flags |= 2;
+            action.message = text;
+        }
+        message.action = action;
+
+        MessageObject object = new MessageObject(currentAccount, message, false, true);
+        object.wasJustSent = true;
+        ArrayList<MessageObject> objects = new ArrayList<>();
+        objects.add(object);
+        getMessagesController().updateInterfaceWithMessages(dialogId, objects, 0);
+        getNotificationCenter().postNotificationName(NotificationCenter.dialogsNeedReload);
         return object;
     }
 

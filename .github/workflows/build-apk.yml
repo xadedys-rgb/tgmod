@@ -28,8 +28,6 @@ jobs:
           "$SDKMANAGER" --version || true
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1" || true
-          echo "=== проверка установки ==="
-          ls $ANDROID_HOME
 
       - name: Скачать сабмодули
         run: |
@@ -40,42 +38,48 @@ jobs:
               *"url = "*)  u="${line#*url = }";;
             esac
             if [ -n "$p" ] && [ -n "$u" ]; then
-              echo "=== $u -> $p"
-              rm -rf "$p"
-              git clone --depth=1 "$u" "$p"
+              if [ "$p" = "TMessagesProj_Modules/media" ]; then
+                echo "=== media клонирую с историей: $u -> $p"
+                rm -rf "$p"
+                git clone "$u" "$p"
+              else
+                echo "=== $u -> $p"
+                rm -rf "$p"
+                git clone --depth=1 "$u" "$p"
+              fi
               p=""; u=""
             fi
           done < .gitmodules
 
       - name: Media-модуль совместимая версия
         run: |
-          if [ ! -d TMessagesProj_Modules/media ]; then
-            git clone https://github.com/Arseny271/media.git TMessagesProj_Modules/media
-          fi
           cd TMessagesProj_Modules/media
-          if [ -f core_settings.gradle ]; then
-            echo "OK: core_settings.gradle есть"
+          FOUND=""
+          for c in $(git log --all --format=%H -- core_settings.gradle); do
+            if ! git cat-file -e "$c:core_settings.gradle" 2>/dev/null; then
+              continue
+            fi
+            if git grep -q "kotlin.plugin.compose" "$c" 2>/dev/null; then
+              echo "Пропускаю $c (слишком новый — требует kotlin.plugin.compose)"
+              continue
+            fi
+            FOUND="$c"
+            break
+          done
+          if [ -n "$FOUND" ]; then
+            echo "Откат media на совместимый коммит: $FOUND"
+            git log -1 --oneline "$FOUND"
+            git checkout "$FOUND"
           else
-            echo "Ищу последнюю версию с core_settings.gradle"
-            git fetch --unshallow 2>/dev/null || git fetch 2>/dev/null || true
-            FOUND=""
+            echo "Совместимый коммит не найден — вырезаю kotlin.plugin.compose из файлов"
             for c in $(git log --all --format=%H -- core_settings.gradle); do
               if git cat-file -e "$c:core_settings.gradle" 2>/dev/null; then
-                FOUND="$c"
+                git checkout "$c"
                 break
               fi
             done
-            if [ -n "$FOUND" ]; then
-              echo "Откат на коммит $FOUND"
-              git checkout "$FOUND"
-            else
-              echo "НЕТ ПОДХОДЯЩЕГО КОММИТА. Содержимое media:"
-              ls -la
-              exit 1
-            fi
+            grep -rl "org.jetbrains.kotlin.plugin.compose" . | xargs -r sed -i '/org.jetbrains.kotlin.plugin.compose/d'
           fi
-          echo "=== Содержимое media:"
-          ls
 
       - name: Keystore
         run: |
@@ -86,7 +90,7 @@ jobs:
       - name: Сборка
         run: |
           chmod +x gradlew
-          ./gradlew assembleArm64Debug --no-daemon || ./gradlew assembleAfatDebug --no-daemon
+          ./gradlew :TMessagesProj_App:assembleAfatDebug --no-daemon
 
       - name: APK
         uses: actions/upload-artifact@v4

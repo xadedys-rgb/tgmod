@@ -1705,13 +1705,21 @@ public class ChatActionCell extends BaseCell implements DownloadController.FileD
             StarsIntroActivity.showTransactionSheet(getContext(), currentAccount, currentMessageObject.messageOwner.date, currentMessageObject.messageOwner.from_id, currentMessageObject.messageOwner.peer_id, (TLRPC.TL_messageActionGiftTon) currentMessageObject.messageOwner.action, avatarStoryParams.resourcesProvider);
         } else if (currentMessageObject.messageOwner.action instanceof TLRPC.TL_messageActionStarGift) {
             final TLRPC.TL_messageActionStarGift action = (TLRPC.TL_messageActionStarGift) currentMessageObject.messageOwner.action;
-            if (action.forceIn) return;
+            if (action.forceIn) {
+                org.telegram.ui.Stars.StarsController.showLocalGiftPreview(getContext(), currentAccount, action.gift, themeDelegate);
+                return;
+            }
 //            StarsIntroActivity.showActionGiftSheet(getContext(), currentAccount, currentMessageObject.getDialogId(), currentMessageObject.isOutOwner(), currentMessageObject.messageOwner.date, currentMessageObject.getId(), action, themeDelegate);
-            new StarGiftSheet(getContext(), currentAccount, currentMessageObject.getDialogId(), themeDelegate)
-                .set(currentMessageObject)
+            StarGiftSheet sheet = new StarGiftSheet(getContext(), currentAccount, currentMessageObject.getDialogId(), themeDelegate)
+                .set(currentMessageObject);
+            sheet
                 .show();
         } else if (currentMessageObject.messageOwner.action instanceof TLRPC.TL_messageActionStarGiftUnique) {
             final TLRPC.TL_messageActionStarGiftUnique action = (TLRPC.TL_messageActionStarGiftUnique) currentMessageObject.messageOwner.action;
+            if (currentMessageObject.getId() < 0) {
+                org.telegram.ui.Stars.StarsController.showLocalGiftPreview(getContext(), currentAccount, action.gift, themeDelegate);
+                return;
+            }
             if (action.gift.burned) {
                 final BaseFragment lastFragment = LaunchActivity.getSafeLastFragment();
                 if (lastFragment == null) return;
@@ -1720,9 +1728,9 @@ public class ChatActionCell extends BaseCell implements DownloadController.FileD
                     .show();
                 return;
             }
-            new StarGiftSheet(getContext(), currentAccount, currentMessageObject.getDialogId(), themeDelegate)
-                .set(currentMessageObject)
-                .show();
+            StarGiftSheet sheet = new StarGiftSheet(getContext(), currentAccount, currentMessageObject.getDialogId(), themeDelegate)
+                .set(currentMessageObject);
+            sheet.show();
         } else if (currentMessageObject.messageOwner.action instanceof TLRPC.TL_messageActionSetChatTheme) {
             TLRPC.TL_messageActionSetChatTheme action = (TLRPC.TL_messageActionSetChatTheme) currentMessageObject.messageOwner.action;
             if (action.theme instanceof TLRPC.TL_chatThemeUniqueGift) {

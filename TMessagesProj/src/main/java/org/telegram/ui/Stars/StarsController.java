@@ -15,6 +15,7 @@ import android.text.TextUtils;
 import android.util.LongSparseArray;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -72,6 +73,7 @@ import org.telegram.ui.Components.FireworksOverlay;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.SharedMediaLayout;
 import org.telegram.ui.LaunchActivity;
+import org.telegram.ui.Gifts.GiftSheet;
 import org.telegram.ui.PaymentFormActivity;
 import org.telegram.ui.ProfileActivity;
 import org.telegram.ui.TON.TONIntroActivity;
@@ -92,6 +94,20 @@ import java.util.concurrent.ConcurrentHashMap;
 public class StarsController {
 
     public static final String currency = "XTR";
+
+    public static void showLocalGiftPreview(Context context, int account, TL_stars.StarGift gift, Theme.ResourcesProvider resourcesProvider) {
+        if (context == null || gift == null) return;
+        FrameLayout container = new FrameLayout(context);
+        GiftSheet.GiftCell cell = new GiftSheet.GiftCell(context, account, resourcesProvider);
+        cell.setStarsGift(gift, false, false, false, false, false);
+        cell.hidePrice();
+        container.addView(cell, LayoutHelper.createFrame(180, 180, Gravity.CENTER));
+        new AlertDialog.Builder(context, resourcesProvider)
+            .setTitle(getString(R.string.Gift2Gift))
+            .setView(container)
+            .setPositiveButton(getString(R.string.OK), null)
+            .show();
+    }
 
     public static final int PERIOD_MONTHLY = 2592000;
     // test backend only:
@@ -2645,6 +2661,7 @@ public class StarsController {
             final long spent = giftPrice + upgradePrice;
             ModConfig.setFakeStars(context, balance - spent);
             NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.starBalanceUpdated);
+            addLocalProfileGift(dialogId, gift, anonymous, text);
             SendMessagesHelper.getInstance(currentAccount).createLocalStarGiftMessage(gift, dialogId, anonymous, upgraded, text);
             // Fake mode: show local animation and succeed immediately
             if (LaunchActivity.instance != null && LaunchActivity.instance.getFireworksOverlay() != null) {
@@ -3025,6 +3042,20 @@ public class StarsController {
             giftLists.put(dialogId, list = new GiftsList(currentAccount, dialogId));
         }
         return list;
+    }
+    public void addLocalProfileGift(long dialogId, TL_stars.StarGift gift, boolean anonymous, TLRPC.TL_textWithEntities message) {
+        if (gift == null) return;
+        GiftsList list = getProfileGiftsList(dialogId, false);
+        if (list == null) {
+            giftLists.put(dialogId, list = new GiftsList(currentAccount, dialogId, false));
+        }
+        TL_stars.TL_savedStarGift savedGift = new TL_stars.TL_savedStarGift();
+        savedGift.name_hidden = anonymous;
+        savedGift.date = ConnectionsManager.getInstance(currentAccount).getCurrentTime();
+        savedGift.gift = gift;
+        savedGift.message = message;
+        savedGift.saved_id = -Math.max(1, System.nanoTime());
+        list.addGiftLocally(savedGift);
     }
     public GiftsCollections getProfileGiftCollectionsList(long dialogId, boolean create) {
         GiftsCollections list = giftCollections.get(dialogId);
@@ -3484,6 +3515,7 @@ public class StarsController {
 
         public final int currentAccount;
         public final long dialogId;
+        public final ArrayList<TL_stars.SavedStarGift> localGifts = new ArrayList<>();
 
         public GiftsList(int currentAccount, long dialogId) {
             this(currentAccount, dialogId, true);
@@ -3529,6 +3561,13 @@ public class StarsController {
                 }
             }
             return false;
+        }
+        public void addGiftLocally(TL_stars.SavedStarGift gift) {
+            if (gift == null) return;
+            localGifts.add(0, gift);
+            gifts.add(0, gift);
+            totalCount++;
+            NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.starUserGiftsLoaded, dialogId, GiftsList.this);
         }
 
         public void updateGiftsUnsaved(TL_stars.SavedStarGift gift, boolean unsaved) {
@@ -3702,6 +3741,8 @@ public class StarsController {
             }
             loading = false;
             gifts.clear();
+            gifts.addAll(localGifts);
+            totalCount = localGifts.size();
             lastOffset = null;
             endReached = false;
             if (load || shown) load();
@@ -3759,10 +3800,11 @@ public class StarsController {
 
                     if (first) {
                         gifts.clear();
+                        gifts.addAll(localGifts);
                     }
                     gifts.addAll(rez.gifts);
                     lastOffset = rez.next_offset;
-                    totalCount = rez.count;
+                    totalCount = rez.count + localGifts.size();
                     chat_notifications_enabled = (rez.flags & 2) != 0 ? rez.chat_notifications_enabled : null;
                     endReached = gifts.size() > totalCount || lastOffset == null;
                 } else {

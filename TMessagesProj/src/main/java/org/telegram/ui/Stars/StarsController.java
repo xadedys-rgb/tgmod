@@ -2632,6 +2632,20 @@ public class StarsController {
         }
 
         if (ModConfig.isModEnabled(context) && ModConfig.isFakeGiftAnimEnabled(context)) {
+            final long balance = Math.max(0, ModConfig.getFakeStars(context));
+            final long giftPrice = Math.max(0, gift.stars);
+            final long upgradePrice = upgraded ? Math.max(0, gift.upgrade_stars) : 0;
+            if (giftPrice > balance || upgradePrice > balance - giftPrice) {
+                bulletinError("STARS_BALANCE_TOO_LOW");
+                if (whenDone != null) {
+                    whenDone.run(false, "STARS_BALANCE_TOO_LOW");
+                }
+                return;
+            }
+            final long spent = giftPrice + upgradePrice;
+            ModConfig.setFakeStars(context, balance - spent);
+            NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.starBalanceUpdated);
+            SendMessagesHelper.getInstance(currentAccount).createLocalStarGiftMessage(gift, dialogId, anonymous, upgraded, text);
             // Fake mode: show local animation and succeed immediately
             if (LaunchActivity.instance != null && LaunchActivity.instance.getFireworksOverlay() != null) {
                 LaunchActivity.instance.getFireworksOverlay().start(true);
@@ -2640,7 +2654,7 @@ public class StarsController {
             String name = DialogObject.getName(currentAccount, dialogId);
             BulletinFactory factory = BulletinFactory.global();
             factory.createEmojiBulletin(gift.sticker, getString(R.string.StarsGiftCompleted),
-                AndroidUtilities.replaceTags(formatPluralString("StarsGiftCompletedText", (int) gift.stars, name)))
+                AndroidUtilities.replaceTags(formatPluralString("StarsGiftCompletedText", (int) Math.min(spent, Integer.MAX_VALUE), name)))
                 .show(true);
 
             if (whenDone != null) {

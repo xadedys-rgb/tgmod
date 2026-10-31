@@ -1942,6 +1942,28 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
         return object;
     }
 
+    public MessageObject createLocalUniqueStarGiftMessage(TL_stars.StarGift gift, long dialogId) {
+        if (!(gift instanceof TL_stars.TL_starGiftUnique)) return null;
+        TLRPC.TL_messageService message = new TLRPC.TL_messageService();
+        message.local_id = message.id = getUserConfig().getNewMessageId();
+        message.dialog_id = dialogId;
+        message.out = true;
+        message.from_id = getMessagesController().getPeer(getUserConfig().getClientUserId());
+        message.peer_id = getMessagesController().getPeer(dialogId);
+        message.date = getConnectionsManager().getCurrentTime();
+        TLRPC.TL_messageActionStarGiftUnique action = new TLRPC.TL_messageActionStarGiftUnique();
+        action.gift = gift;
+        action.transferred = true;
+        message.action = action;
+        MessageObject object = new MessageObject(currentAccount, message, false, true);
+        object.wasJustSent = true;
+        ArrayList<MessageObject> objects = new ArrayList<>();
+        objects.add(object);
+        getMessagesController().updateInterfaceWithMessages(dialogId, objects, 0);
+        getNotificationCenter().postNotificationName(NotificationCenter.dialogsNeedReload);
+        return object;
+    }
+
     public void updateSendingGramTransferComment(MessageObject object, String comment, boolean encrypted) {
         if (object == null || !(object.messageOwner.action instanceof TLRPC.TL_messageActionGramTransfer)) return;
         final TLRPC.TL_messageActionGramTransfer action = (TLRPC.TL_messageActionGramTransfer) object.messageOwner.action;

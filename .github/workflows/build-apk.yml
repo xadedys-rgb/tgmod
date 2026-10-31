@@ -36,142 +36,55 @@ jobs:
             "ndk;27.2.12479018" \
             "cmake;3.22.1"
 
-      - name: Скачать сабмодули
+      - name: Скачать сабмодули в версиях исходного Telegram
         shell: bash
         run: |
           set -e
-          p=""
-          u=""
-
-          while read -r line; do
-            case "$line" in
-              *"path = "*)
-                p="${line#*path = }"
-                ;;
-              *"url = "*)
-                u="${line#*url = }"
-                ;;
-            esac
-
-            if [ -n "$p" ] && [ -n "$u" ]; then
-              echo "=== $u -> $p"
-              rm -rf "$p"
-              mkdir -p "$(dirname "$p")"
-
-              if [ "$p" = "TMessagesProj_Modules/media" ]; then
-                git clone "$u" "$p"
-              else
-                git clone --depth=1 "$u" "$p"
-              fi
-
-              p=""
-              u=""
+          rm -rf "$RUNNER_TEMP/telegram-upstream"
+          git clone --no-checkout --filter=blob:none \
+            https://github.com/DrKLO/Telegram.git \
+            "$RUNNER_TEMP/telegram-upstream"
+          reference=TMessagesProj/jni/voip/webrtc/api/environment/environment.h
+          wanted=$(git hash-object "$reference")
+          revision=""
+          while read -r commit; do
+            actual=$(git -C "$RUNNER_TEMP/telegram-upstream" rev-parse "$commit:$reference" 2>/dev/null || true)
+            if [ "$actual" = "$wanted" ]; then
+              revision="$commit"
+              break
             fi
-          done < .gitmodules
-
-          test -d TMessagesProj_Modules/media/.git
-
-      - name: Media-модуль совместимая версия
-        shell: bash
-        run: |
-          set -e
-          cd TMessagesProj_Modules/media
-          FOUND=""
-
-          for c in $(git log --all --format=%H -- core_settings.gradle); do
-            if ! git cat-file -e "$c:core_settings.gradle" 2>/dev/null; then
-              continue
-            fi
-
-            if git grep -q "kotlin.plugin.compose" "$c" 2>/dev/null; then
-              echo "Пропускаю $c: требуется kotlin.plugin.compose"
-              continue
-            fi
-
-            FOUND="$c"
-            break
-          done
-
-          if [ -z "$FOUND" ]; then
-            echo "Совместимый коммит media не найден"
+          done < <(git -C "$RUNNER_TEMP/telegram-upstream" log --all --format=%H -- "$reference")
+          if [ -z "$revision" ]; then
+            echo "Не найден исходный коммит Telegram с таким файлом $reference. Нужен точный коммит исходного проекта."
             exit 1
           fi
+          echo "Исходный коммит Telegram: $revision"
+          git -C "$RUNNER_TEMP/telegram-upstream" checkout --detach "$revision"
+          git -C "$RUNNER_TEMP/telegram-upstream" submodule update --init --recursive --depth=1
 
-          echo "Использую media commit: $FOUND"
-          git checkout "$FOUND"
-          test -f core_settings.gradle
+          git -C "$RUNNER_TEMP/telegram-upstream" \
+            submodule foreach --quiet 'printf "%s\n" "$path"' > "$RUNNER_TEMP/submodule-paths"
 
-      - name: Keystore
-        shell: bash
-        run: |
-          set -e
-          cd TMessagesProj
+          while read -r path; do
+            echo "Копирую точную upstream-версию: $path"
+            rm -rf "$path"
+            mkdir -p "$(dirname "$path")"
+            cp -a "$RUNNER_TEMP/telegram-upstream/$path" "$path"
+          done < "$RUNNER_TEMP/submodule-paths"
 
-          rm -f config/debug.keystore
-
-          keytool -genkeypair \
-            -v \
-            -keystore config/debug.keystore \
-            -storepass telegram \
-            -keypass telegram \
-            -alias telegram \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Debug, O=Debug, C=US"
-
-          printf '%s\n' \
-            'STORE_FILE=debug.keystore' \
-            'STORE_PASSWORD=telegram' \
-            'KEY_ALIAS=telegram' \
-            'KEY_PASSWORD=telegram' \
-            > config/keystore.properties
-
-      - name: Совместимость WebRTC и Abseil
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p TMessagesProj/jni/third_party/absl/absl/base
-
-          cat > TMessagesProj/jni/third_party/absl/absl/base/nullability.h <<'EOF'
-          #ifndef ABSL_BASE_NULLABILITY_COMPAT_H_
-          #define ABSL_BASE_NULLABILITY_COMPAT_H_
-
-          namespace absl {
-          template <typename T>
-          using Nonnull = T;
-
-          template <typename T>
-          using Nullable = T;
+          test -f TMessagesProj_Modules/media/core_settings.gradle
+          test -f TMessagesProj/config/release.keystore || {
+            echo "Нет тестового ключа TMessagesProj/config/release.keystore"
+            exit 1
           }
-
-          #ifndef absl_nullable
-          #define absl_nullable
-          #endif
-
-          #ifndef absl_nonnull
-          #define absl_nonnull
-          #endif
-
-          #ifndef absl_nullability_compatible
-          #define absl_nullability_compatible
-          #endif
-
-          #endif
-          EOF
-
-          test -f TMessagesProj/jni/third_party/absl/absl/base/nullability.h
-          grep -q 'using Nonnull' TMessagesProj/jni/third_party/absl/absl/base/nullability.h
-          grep -q 'using Nullable' TMessagesProj/jni/third_party/absl/absl/base/nullability.h
-          echo "Исправлен absl/base/nullability.h"
 
       - name: Сборка
         shell: bash
         run: |
           set -e
           chmod +x gradlew
-          ./gradlew :TMessagesProj_App:assembleAfatDebug --no-daemon --stacktrace
+          ./gradlew :TMessagesProj_App:assembleAfatDebug --no-daemon --max-workers=2 \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" --stacktrace
 
       - name: APK
         uses: actions/upload-artifact@v4

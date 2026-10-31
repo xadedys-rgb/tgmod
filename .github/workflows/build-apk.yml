@@ -63,22 +63,29 @@ jobs:
           git -C "$RUNNER_TEMP/telegram-upstream" checkout --detach "$revision"
           git -C "$RUNNER_TEMP/telegram-upstream" submodule update --init --recursive --progress || true
 
-          mapfile -t paths < <(git config --file .gitmodules --get-regexp path | awk '{print $2}')
-          [ "${#paths[@]}" -gt 0 ] || exit 1
+          awk '
+            /^\[submodule/ { if (path != "") print path, url; path = ""; url = "" }
+            /^[ \t]*path[ \t]*=/ { sub(/^[ \t]*path[ \t]*=[ \t]*/, ""); path = $0 }
+            /^[ \t]*url[ \t]*=/  { sub(/^[ \t]*url[ \t]*=[ \t]*/, "");  url = $0 }
+            END { if (path != "") print path, url }
+          ' .gitmodules > "$RUNNER_TEMP/submodules.txt"
 
-          for path in "${paths[@]}"; do
+          [ -s "$RUNNER_TEMP/submodules.txt" ] || exit 1
+
+          while read -r path url; do
             [ -z "$path" ] && continue
             src="$RUNNER_TEMP/telegram-upstream/$path"
 
+            rm -rf "$path"
+            mkdir -p "$(dirname "$path")"
+
             if [ -e "$src" ] && [ -n "$(ls -A "$src" 2>/dev/null)" ]; then
-              rm -rf "$path"
-              mkdir -p "$(dirname "$path")"
               cp -a "$src" "$path"
             else
-              git submodule update --init -- "$path"
-              [ -e "$path" ] && [ -n "$(ls -A "$path" 2>/dev/null)" ] || exit 1
+              git clone --depth=1 "$url" "$path"
+              rm -rf "$path/.git"
             fi
-          done
+          done < "$RUNNER_TEMP/submodules.txt"
 
           test -f TMessagesProj_Modules/media/core_settings.gradle
           test -f TMessagesProj/config/release.keystore

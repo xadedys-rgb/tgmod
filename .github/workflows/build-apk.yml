@@ -12,108 +12,155 @@ jobs:
     timeout-minutes: 350
 
     steps:
-      - name: Checkout
+      - name: Скачать проект
         uses: actions/checkout@v4
 
-      - name: Java 17
+      - name: Установить Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: SDK NDK CMake
+      - name: Установить Android SDK, NDK и CMake
         shell: bash
         run: |
           set -e
+
           export ANDROID_HOME=/usr/local/lib/android/sdk
-          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n1)
+
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
+            -name sdkmanager -type f | head -n 1)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "Не найден sdkmanager"
+            exit 1
+          fi
+
+          echo "Использую: $SDKMANAGER"
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+
           "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
             "ndk;27.2.12479018" \
             "cmake;3.22.1"
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
 
-      - name: Скачать сабмодули в версиях исходного Telegram
+      - name: Скачать зависимости
         shell: bash
         run: |
-          set -eo pipefail
+          set -euo pipefail
 
-          test -f .gitmodules || exit 1
+          while read -r key path; do
+            name="${key%.path}"
+            url="$(git config -f .gitmodules --get "${name}.url")"
 
-          rm -rf "$RUNNER_TEMP/telegram-upstream"
-          git clone --filter=blob:none \
-            https://github.com/DrKLO/Telegram.git \
-            "$RUNNER_TEMP/telegram-upstream"
+            echo "=== $path <- $url"
 
-          reference=TMessagesProj/jni/voip/webrtc/api/environment/environment.h
-          wanted=$(git hash-object "$reference")
-          revision=""
-          while read -r commit; do
-            actual=$(git -C "$RUNNER_TEMP/telegram-upstream" rev-parse "$commit:$reference" 2>/dev/null || true)
-            if [ "$actual" = "$wanted" ]; then
-              revision="$commit"
-              break
-            fi
-          done < <(git -C "$RUNNER_TEMP/telegram-upstream" log --all --format=%H -- "$reference")
-
-          [ -n "$revision" ] || exit 1
-
-          git -C "$RUNNER_TEMP/telegram-upstream" checkout --detach "$revision"
-          git -C "$RUNNER_TEMP/telegram-upstream" submodule update --init --recursive --progress || true
-
-          awk '
-            BEGIN { RS="\n"; ORS="\n" }
-            { gsub(/\r/, "") }
-            /^\[submodule/ { if (path != "") print path, url; path = ""; url = "" }
-            /^[ \t]*path[ \t]*=/ { sub(/^[ \t]*path[ \t]*=[ \t]*/, ""); path = $0 }
-            /^[ \t]*url[ \t]*=/  { sub(/^[ \t]*url[ \t]*=[ \t]*/, "");  url = $0 }
-            END { if (path != "") print path, url }
-          ' .gitmodules > "$RUNNER_TEMP/submodules.txt"
-
-          [ -s "$RUNNER_TEMP/submodules.txt" ] || exit 1
-
-          while read -r path url; do
-            [ -z "$path" ] && continue
-            src="$RUNNER_TEMP/telegram-upstream/$path"
-
-            rm -rf "$path"
+            # Это чистая временная копия на GitHub runner.
+            rm -rf -- "$path"
             mkdir -p "$(dirname "$path")"
 
-            if [ -e "$src" ] && [ -n "$(ls -A "$src" 2>/dev/null)" ]; then
-              cp -a "$src" "$path"
+            if [ "$path" = "TMessagesProj_Modules/media" ]; then
+              git clone "$url" "$path"
+              git -C "$path" checkout --detach \
+                56281d3402ddfae80fe1ed372593172c453e4eaa
             else
               git clone --depth=1 "$url" "$path"
-              rm -rf "$path/.git"
             fi
-          done < "$RUNNER_TEMP/submodules.txt"
+          done < <(
+            git config -f .gitmodules \
+              --get-regexp '^submodule\..*\.path$'
+          )
 
-          if [ ! -f TMessagesProj_Modules/media/build.gradle.kts ] && \
-             [ ! -f TMessagesProj_Modules/media/build.gradle ] && \
-             [ ! -f TMessagesProj_Modules/media/core_settings.gradle ]; then
-            echo "::error::Модуль media скачан, но в нём нет build.gradle / build.gradle.kts"
-            find TMessagesProj_Modules/media -maxdepth 2 2>/dev/null || true
+          echo "=== Проверка зависимостей"
+
+          test -f TMessagesProj_Modules/media/core_settings.gradle || {
+            echo "Нет файла media/core_settings.gradle"
             exit 1
-          fi
+          }
 
-          if [ ! -f TMessagesProj/config/release.keystore ]; then
-            echo "::error::Нет файла TMessagesProj/config/release.keystore"
-            find TMessagesProj/config -maxdepth 2 2>/dev/null || echo "каталог config отсутствует"
+          test -f TMessagesProj/jni/third_party/absl/absl/base/nullability.h || {
+            echo "Нет файла absl/base/nullability.h"
             exit 1
-          fi
+          }
 
-      - name: Сборка
+          test -f TMessagesProj/config/release.keystore || {
+            echo "Нет файла TMessagesProj/config/release.keystore"
+            exit 1
+          }
+
+          echo "Основные файлы найдены"
+
+      - name: Совместимость WebRTC и Abseil
         shell: bash
         run: |
-          set -e
-          chmod +x gradlew
-          ./gradlew :TMessagesProj_App:assembleAfatDebug --no-daemon --max-workers=2 \
-            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" --stacktrace
+          set -euo pipefail
 
-      - name: APK
+          cat > TMessagesProj/jni/third_party/absl/absl/base/nullability_compat.h <<'EOF'
+          #ifndef TELEGRAM_NULLABILITY_COMPAT_H_
+          #define TELEGRAM_NULLABILITY_COMPAT_H_
+
+          #include "absl/base/nullability.h"
+
+          namespace absl {
+          template <typename T>
+          using Nonnull = T;
+
+          template <typename T>
+          using Nullable = T;
+          }
+
+          #endif
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path("TMessagesProj/jni/voip/webrtc")
+          count = 0
+
+          for path in root.rglob("*"):
+              if path.suffix not in (".h", ".cc", ".cpp"):
+                  continue
+
+              data = path.read_bytes()
+
+              if b"absl::Nonnull<" not in data and b"absl::Nullable<" not in data:
+                  continue
+
+              path.write_bytes(
+                  b'#include "absl/base/nullability_compat.h"\n' + data
+              )
+
+              print("Исправлен:", path)
+              count += 1
+
+          if count == 0:
+              raise SystemExit(
+                  "Не найдены файлы WebRTC с Nonnull/Nullable"
+              )
+
+          print("Исправлено файлов:", count)
+          PY
+
+      - name: Собрать APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          chmod +x gradlew
+
+          ./gradlew :TMessagesProj_App:assembleAfatDebug \
+            --no-daemon \
+            --max-workers=2 \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            --stacktrace
+
+      - name: Сохранить APK
         uses: actions/upload-artifact@v4
         with:
           name: telegram-mod-apk
-          path: "**/build/outputs/apk/**/*.apk"
+          path: TMessagesProj_App/build/outputs/apk/**/*.apk
           if-no-files-found: error

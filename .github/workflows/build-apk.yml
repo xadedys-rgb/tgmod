@@ -47,6 +47,37 @@ jobs:
             fi
           done < .gitmodules
 
+      - name: Media-модуль: подобрать совместимую версию
+        run: |
+          if [ ! -d TMessagesProj_Modules/media ]; then
+            echo "media не скачался, клонирую заново"
+            git clone https://github.com/Arseny271/media.git TMessagesProj_Modules/media
+          fi
+          cd TMessagesProj_Modules/media
+          if [ -f core_settings.gradle ]; then
+            echo "OK: core_settings.gradle есть"
+          else
+            echo "В свежей версии media нет core_settings.gradle — ищу последнюю версию с ним"
+            git fetch --unshallow 2>/dev/null || git fetch 2>/dev/null || true
+            FOUND=""
+            for c in $(git log --all --format=%H -- core_settings.gradle); do
+              if git cat-file -e "$c:core_settings.gradle" 2>/dev/null; then
+                FOUND="$c"
+                break
+              fi
+            done
+            if [ -n "$FOUND" ]; then
+              echo "Откатываю media на коммит $FOUND"
+              git checkout "$FOUND"
+            else
+              echo "!!! Подходящего коммита нет. Вот что лежит в media:"
+              ls -la
+              exit 1
+            fi
+          fi
+          echo "=== Содержимое media:"
+          ls
+
       - name: Keystore
         run: |
           cd TMessagesProj

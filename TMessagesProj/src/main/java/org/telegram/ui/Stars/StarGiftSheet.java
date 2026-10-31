@@ -105,6 +105,7 @@ import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.ModConfig;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
+import org.telegram.messenger.SendMessagesHelper;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.UserObject;
 import org.telegram.messenger.Utilities;
@@ -7784,6 +7785,9 @@ public class StarGiftSheet extends BottomSheetWithRecyclerListView implements No
 
         final Context context = getContext();
         if (context != null && ModConfig.isModEnabled(context) && ModConfig.isFakeGiftAnimEnabled(context)) {
+            TL_stars.StarGift gift = getGift();
+            StarsController.getInstance(currentAccount).addLocalProfileGift(dialogId, gift, false, null);
+            SendMessagesHelper.getInstance(currentAccount).createLocalUniqueStarGiftMessage(gift, dialogId);
             if (LaunchActivity.instance != null && LaunchActivity.instance.getFireworksOverlay() != null) {
                 LaunchActivity.instance.getFireworksOverlay().start(true);
             }

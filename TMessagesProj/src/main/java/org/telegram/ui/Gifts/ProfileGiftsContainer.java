@@ -660,6 +660,10 @@ public class ProfileGiftsContainer extends FrameLayout implements NotificationCe
             if (list == null) return;
             if (item.object instanceof TL_stars.SavedStarGift) {
                 final TL_stars.SavedStarGift userGift = (TL_stars.SavedStarGift) item.object;
+                if (list.localGifts.contains(userGift)) {
+                    StarsController.showLocalGiftPreview(getContext(), currentAccount, userGift.gift, resourcesProvider);
+                    return;
+                }
                 if (reordering) {
                     if (isCollection) return;
                     if (!(userGift.gift instanceof TL_stars.TL_starGiftUnique)) {
@@ -683,7 +687,7 @@ public class ProfileGiftsContainer extends FrameLayout implements NotificationCe
                         listView.scrollToPosition(0);
                     }
                 } else {
-                    new StarGiftSheet(getContext(), currentAccount, parent.dialogId, resourcesProvider)
+                    StarGiftSheet sheet = new StarGiftSheet(getContext(), currentAccount, parent.dialogId, resourcesProvider)
                         .setOnGiftUpdatedListener(() -> {
                             update(false);
                         })
@@ -706,8 +710,8 @@ public class ProfileGiftsContainer extends FrameLayout implements NotificationCe
                                 LaunchActivity.instance.getFireworksOverlay().start(true);
                             }
                         })
-                        .set(userGift, list)
-                        .show();
+                        .set(userGift, list);
+                    sheet.show();
                 }
             }
         }
@@ -717,6 +721,7 @@ public class ProfileGiftsContainer extends FrameLayout implements NotificationCe
             if (view instanceof GiftSheet.GiftCell && item.object instanceof TL_stars.SavedStarGift) {
                 final GiftSheet.GiftCell cell = (GiftSheet.GiftCell) view;
                 final TL_stars.SavedStarGift savedStarGift = (TL_stars.SavedStarGift) item.object;
+                if (list.localGifts.contains(savedStarGift)) return true;
                 final ItemOptions o = ItemOptions.makeOptions(parent.fragment, view, true);
                 parent.currentMenu = o;
                 if (parent.collections.isMine() && (isCollection || parent.collections.getCollections().size() > 0 || true)) {

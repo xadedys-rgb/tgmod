@@ -10,6 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 350
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,76 +22,117 @@ jobs:
           java-version: '17'
 
       - name: SDK NDK CMake
+        shell: bash
         run: |
+          set -e
           export ANDROID_HOME=/usr/local/lib/android/sdk
-          SDKMANAGER=$(ls $ANDROID_HOME/cmdline-tools/*/bin/sdkmanager | head -n1)
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n1)
           echo "Использую: $SDKMANAGER"
-          "$SDKMANAGER" --version || true
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1" || true
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1"
 
       - name: Скачать сабмодули
+        shell: bash
         run: |
-          p=""; u=""
+          set -e
+          p=""
+          u=""
+
           while read -r line; do
             case "$line" in
-              *"path = "*) p="${line#*path = }";;
-              *"url = "*)  u="${line#*url = }";;
+              *"path = "*)
+                p="${line#*path = }"
+                ;;
+              *"url = "*)
+                u="${line#*url = }"
+                ;;
             esac
+
             if [ -n "$p" ] && [ -n "$u" ]; then
+              echo "=== $u -> $p"
+              rm -rf "$p"
+              mkdir -p "$(dirname "$p")"
+
               if [ "$p" = "TMessagesProj_Modules/media" ]; then
-                echo "=== media клонирую с историей: $u -> $p"
-                rm -rf "$p"
                 git clone "$u" "$p"
               else
-                echo "=== $u -> $p"
-                rm -rf "$p"
                 git clone --depth=1 "$u" "$p"
               fi
-              p=""; u=""
+
+              p=""
+              u=""
             fi
           done < .gitmodules
 
+          test -f TMessagesProj_Modules/media/core_settings.gradle
+
       - name: Media-модуль совместимая версия
+        shell: bash
         run: |
+          set -e
           cd TMessagesProj_Modules/media
           FOUND=""
+
           for c in $(git log --all --format=%H -- core_settings.gradle); do
             if ! git cat-file -e "$c:core_settings.gradle" 2>/dev/null; then
               continue
             fi
+
             if git grep -q "kotlin.plugin.compose" "$c" 2>/dev/null; then
-              echo "Пропускаю $c (слишком новый — требует kotlin.plugin.compose)"
+              echo "Пропускаю $c: требуется kotlin.plugin.compose"
               continue
             fi
+
             FOUND="$c"
             break
           done
-          if [ -n "$FOUND" ]; then
-            echo "Откат media на совместимый коммит: $FOUND"
-            git log -1 --oneline "$FOUND"
-            git checkout "$FOUND"
-          else
-            echo "Совместимый коммит не найден — вырезаю kotlin.plugin.compose из файлов"
-            for c in $(git log --all --format=%H -- core_settings.gradle); do
-              if git cat-file -e "$c:core_settings.gradle" 2>/dev/null; then
-                git checkout "$c"
-                break
-              fi
-            done
-            grep -rl "org.jetbrains.kotlin.plugin.compose" . | xargs -r sed -i '/org.jetbrains.kotlin.plugin.compose/d'
+
+          if [ -z "$FOUND" ]; then
+            echo "Совместимый коммит media не найден"
+            exit 1
           fi
 
+          echo "Использую media commit: $FOUND"
+          git checkout "$FOUND"
+          test -f core_settings.gradle
+
       - name: Keystore
+        shell: bash
         run: |
+          set -e
           cd TMessagesProj
-          keytool -genkeypair -v -keystore config/debug.keystore -storepass telegram -keypass telegram -alias telegram -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Debug, O=Debug, C=US"
-          printf 'STORE_FILE=debug.keystore\nSTORE_PASSWORD=telegram\nKEY_ALIAS=telegram\nKEY_PASSWORD=telegram\n' > config/keystore.properties
+
+          rm -f config/debug.keystore
+
+          keytool -genkeypair \
+            -v \
+            -keystore config/debug.keystore \
+            -storepass telegram \
+            -keypass telegram \
+            -alias telegram \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Debug, O=Debug, C=US"
+
+          printf '%s\n' \
+            'STORE_FILE=debug.keystore' \
+            'STORE_PASSWORD=telegram' \
+            'KEY_ALIAS=telegram' \
+            'KEY_PASSWORD=telegram' \
+            > config/keystore.properties
 
       - name: Сборка
+        shell: bash
         run: |
+          set -e
           chmod +x gradlew
-          ./gradlew :TMessagesProj_App:assembleAfatDebug --no-daemon
+          ./gradlew :TMessagesProj_App:assembleAfatDebug --no-daemon --stacktrace
 
       - name: APK
         uses: actions/upload-artifact@v4

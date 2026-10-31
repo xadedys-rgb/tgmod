@@ -88,6 +88,7 @@ public class ModSettingsActivity extends BaseFragment {
         if (position == ROW_MOD_ENABLED) {
             boolean newValue = !ModConfig.isModEnabled(getParentActivity());
             ModConfig.setModEnabled(getParentActivity(), newValue);
+            adapter.notifyItemChanged(ROW_MOD_ENABLED);
             adapter.notifyItemChanged(ROW_FAKE_STARS);
             adapter.notifyItemChanged(ROW_FAKE_GIFT_ANIM);
             return;

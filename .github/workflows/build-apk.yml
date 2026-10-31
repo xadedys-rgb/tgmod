@@ -25,8 +25,11 @@ jobs:
           export ANDROID_HOME=/usr/local/lib/android/sdk
           SDKMANAGER=$(ls $ANDROID_HOME/cmdline-tools/*/bin/sdkmanager | head -n1)
           echo "Использую: $SDKMANAGER"
+          "$SDKMANAGER" --version || true
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+          "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1" || true
+          echo "=== проверка установки ==="
+          ls $ANDROID_HOME
 
       - name: Скачать сабмодули
         run: |
@@ -46,11 +49,9 @@ jobs:
 
       - name: Keystore
         run: |
-          if [ ! -f TMessagesProj/config ]; then
-            cd TMessagesProj
-            keytool -genkeypair -v -keystore debug.keystore -storepass telegram -keypass telegram -alias telegram -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Debug, O=Debug, C=US"
-            printf 'STORE_FILE=debug.keystore\nSTORE_PASSWORD=telegram\nKEY_ALIAS=telegram\nKEY_PASSWORD=telegram\n' > config
-          fi
+          cd TMessagesProj
+          keytool -genkeypair -v -keystore config/debug.keystore -storepass telegram -keypass telegram -alias telegram -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Debug, O=Debug, C=US"
+          printf 'STORE_FILE=debug.keystore\nSTORE_PASSWORD=telegram\nKEY_ALIAS=telegram\nKEY_PASSWORD=telegram\n' > config/keystore.properties
 
       - name: Сборка
         run: |

@@ -28,22 +28,24 @@ jobs:
           export ANDROID_HOME=/usr/local/lib/android/sdk
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n1)
           echo "Использую: $SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
             "ndk;27.2.12479018" \
             "cmake;3.22.1"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
 
       - name: Скачать сабмодули в версиях исходного Telegram
         shell: bash
         run: |
-          set -e
+          set -eo pipefail
+
           rm -rf "$RUNNER_TEMP/telegram-upstream"
           git clone --no-checkout --filter=blob:none \
             https://github.com/DrKLO/Telegram.git \
             "$RUNNER_TEMP/telegram-upstream"
+
           reference=TMessagesProj/jni/voip/webrtc/api/environment/environment.h
           wanted=$(git hash-object "$reference")
           revision=""
@@ -54,29 +56,61 @@ jobs:
               break
             fi
           done < <(git -C "$RUNNER_TEMP/telegram-upstream" log --all --format=%H -- "$reference")
+
           if [ -z "$revision" ]; then
-            echo "Не найден исходный коммит Telegram с таким файлом $reference. Нужен точный коммит исходного проекта."
+            echo "::error::Не найден исходный коммит Telegram с файлом $reference"
             exit 1
           fi
           echo "Исходный коммит Telegram: $revision"
+
           git -C "$RUNNER_TEMP/telegram-upstream" checkout --detach "$revision"
-          git -C "$RUNNER_TEMP/telegram-upstream" submodule update --init --recursive --depth=1
+
+          echo "::group::Список сабмодулей на этом коммите"
+          git -C "$RUNNER_TEMP/telegram-upstream" config --file .gitmodules --get-regexp path || echo "(.gitmodules отсутствует или пуст)"
+          echo "::endgroup::"
+
+          git -C "$RUNNER_TEMP/telegram-upstream" submodule update --init --recursive --progress
 
           git -C "$RUNNER_TEMP/telegram-upstream" \
-            submodule foreach --quiet 'printf "%s\n" "$path"' > "$RUNNER_TEMP/submodule-paths"
+            submodule foreach --recursive --quiet 'printf "%s\n" "$sm_path"' > "$RUNNER_TEMP/submodule-paths"
+
+          echo "::group::Пути сабмодулей, которые будут скопированы"
+          cat "$RUNNER_TEMP/submodule-paths" || true
+          echo "::endgroup::"
+
+          if [ ! -s "$RUNNER_TEMP/submodule-paths" ]; then
+            echo "::error::Список путей сабмодулей пуст — нечего копировать"
+            exit 1
+          fi
 
           while read -r path; do
+            [ -z "$path" ] && continue
+            src="$RUNNER_TEMP/telegram-upstream/$path"
+            if [ ! -e "$src" ]; then
+              echo "::error::В upstream-репозитории нет пути: $path"
+              exit 1
+            fi
             echo "Копирую точную upstream-версию: $path"
             rm -rf "$path"
             mkdir -p "$(dirname "$path")"
-            cp -a "$RUNNER_TEMP/telegram-upstream/$path" "$path"
+            cp -a "$src" "$path"
           done < "$RUNNER_TEMP/submodule-paths"
 
-          test -f TMessagesProj_Modules/media/core_settings.gradle
-          test -f TMessagesProj/config/release.keystore || {
-            echo "Нет тестового ключа TMessagesProj/config/release.keystore"
+          echo "::group::Проверка критичных файлов"
+          if [ ! -f TMessagesProj_Modules/media/core_settings.gradle ]; then
+            echo "::error::Не найден файл TMessagesProj_Modules/media/core_settings.gradle после копирования сабмодулей"
+            echo "Содержимое TMessagesProj_Modules (если есть):"
+            find TMessagesProj_Modules -maxdepth 3 2>/dev/null || echo "(каталог TMessagesProj_Modules отсутствует)"
             exit 1
-          }
+          fi
+
+          if [ ! -f TMessagesProj/config/release.keystore ]; then
+            echo "::error::Нет тестового ключа TMessagesProj/config/release.keystore"
+            find TMessagesProj/config -maxdepth 2 2>/dev/null || echo "(каталог TMessagesProj/config отсутствует)"
+            exit 1
+          fi
+          echo "Все критичные файлы на месте"
+          echo "::endgroup::"
 
       - name: Сборка
         shell: bash

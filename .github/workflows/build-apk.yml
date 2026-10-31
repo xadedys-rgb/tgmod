@@ -132,29 +132,27 @@ jobs:
         run: |
           set -e
 
-          cat > TMessagesProj/jni/third_party/absl/absl/base/nullability_compat.h <<'EOF'
+          mkdir -p TMessagesProj/jni/third_party/absl/absl/base
+
+          cat > TMessagesProj/jni/third_party/absl/absl/base/nullability.h <<'EOF'
           #ifndef ABSL_BASE_NULLABILITY_COMPAT_H_
           #define ABSL_BASE_NULLABILITY_COMPAT_H_
 
           namespace absl {
           template <typename T>
           using Nonnull = T;
+
+          template <typename T>
+          using Nullable = T;
           }
 
           #endif
           EOF
 
-          for file in \
-            TMessagesProj/jni/voip/webrtc/api/environment/environment.h \
-            TMessagesProj/jni/voip/webrtc/modules/audio_processing/include/audio_processing.h \
-            TMessagesProj/jni/voip/webrtc/api/task_queue/pending_task_safety_flag.h
-          do
-            test -f "$file"
-            sed -i '1i#include "absl/base/nullability_compat.h"' "$file"
-            grep -q '^#include "absl/base/nullability_compat.h"' "$file"
-            echo "PATCHED: $file"
-            head -n 2 "$file"
-          done
+          test -f TMessagesProj/jni/third_party/absl/absl/base/nullability.h
+          grep -q 'using Nonnull' TMessagesProj/jni/third_party/absl/absl/base/nullability.h
+          grep -q 'using Nullable' TMessagesProj/jni/third_party/absl/absl/base/nullability.h
+          echo "Исправлен absl/base/nullability.h"
 
       - name: Сборка
         shell: bash
